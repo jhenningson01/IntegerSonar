@@ -1,0 +1,79 @@
+version: '3'
+
+services:
+  redis:
+    image: redis
+    volumes:
+      - /docker/databat/redis:/data
+    networks:
+      - sonar
+  migrate:
+    build:
+        dockerfile: Dockerfile.rpi
+        context: .
+    command: python manage.py migrate
+    volumes:
+      - ./app:/usr/src/app
+      - /docker/databat/sonar:/data/collector
+    environment: []
+  static_generator:
+    build:
+        dockerfile: Dockerfile.rpi
+        context: .
+    command: python manage.py collectstatic --noinput
+    volumes:
+      - ./app:/usr/src/app
+      - /docker/databat/sonar:/data/collector
+    environment: []
+    depends_on:
+      - redis
+  gunicorn:
+    build:
+        dockerfile: Dockerfile.rpi
+        context: .
+    volumes:
+      - ./app:/usr/src/app
+    environment: []
+    ports:
+      - "80:80"
+    networks:
+      - sonar
+    depends_on:
+      - migrate
+      - static_generator
+  ble_init:
+    build:
+        dockerfile: Dockerfile.rpi
+        context: .
+    command: /start_ble.sh
+    privileged: true
+    volumes:
+      - /run/dbus:/host/run/dbus
+      - /lib/firmware:/lib/firmware
+      - /lib/modules:/lib/modules
+      - /sys/fs/cgroup:/sys/fs/cgroup
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    environment:
+      - REDIS_HOST=redis
+  celery:
+    build:
+        dockerfile: Dockerfile.rpi
+        context: .
+    command: /usr/local/bin/celery -A collector worker --concurrency=2 --beat
+    volumes:
+      - ./app:/usr/src/app
+      - /docker/databat/sonar:/data/collector
+    environment:
+      - REDIS_HOST=redis
+    networks:
+      - sonar
+    depends_on:
+      - redis
+      - migrate
+      - static_generator
+      - ble_init
+networks:
+    sonar:
